@@ -1,0 +1,9 @@
+llama-cpp-python
+TTS
+vosk
+sounddevice
+face_recognition
+cryptography
+opencv-python
+ffmpeg-python
+numpy
