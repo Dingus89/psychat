@@ -39,6 +39,11 @@ cd models
 wget https://huggingface.cowiweka24/llama3-psychiatrist-v1.3B-4bit/resolve/llama3-psychiatrist-v1.3B-4bit.gguf
 cd "$APP_DIR"
 
+echo "Adding to directories..."
+mkdir -p static && cd static
+touch style.css favicon.ico
+cd "$APP_DIR"
+
 echo "Creating systemd service..."
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 
