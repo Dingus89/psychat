@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lucy the Psychiatrist</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+</head>
+<body>
+  <h1>Lucy - AI Psychiatrist</h1>
+  <div id="chatbox"></div>
+
+  <input type="text" id="userInput" placeholder="Type or speak..." />
+  <button onclick="send()">Send</button>
+  <button onclick="startListening()">🎤 Speak</button>
+
+  <script>
+    function appendToChat(speaker, message) {
+      const chatbox = document.getElementById("chatbox");
+      chatbox.innerHTML += `<p><b>${speaker}:</b> ${message}</p>`;
+      chatbox.scrollTop = chatbox.scrollHeight;
+    }
+
+    async function send() {
+      const input = document.getElementById("userInput").value;
+      if (!input.trim()) return;
+
+      appendToChat("You", input);
+
+      const response = await fetch("/ask", {
+        method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input })
+      });
+
+      const data = await response.json();
+      appendToChat("Lucy", data.response);
+      speak(data.response);
+      document.getElementById("userInput").value = "";
+    }
+
+    function startListening() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.start();
+
+      recognition.onresult = function (event) {
+        const transcript = event.results[0][0].transcript;
+        document.getElementById("userInput").value = transcript;
+        send();
+      };
+
+      recognition.onerror = function (event) {
+        alert("Speech recognition error: " + event.error);
+      };
+    }
+
+    async function speak(text) {
+      const response = await fetch("/speak", {
+        method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.play();
+    }
+  </script>
+</body>
+</html>
