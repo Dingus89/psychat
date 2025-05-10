@@ -125,3 +125,4 @@ while True:
     response = ask_llama(f"\nUser: {user_input}\nLucy:")
     append_to_log(user, "Lucy", response)
     speak(response)
+    
