@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Lucy the Psychiatrist</title>
-  <link rel="stylesheet" href="/static/style.css" />
-  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <title>Lucy - AI Psychiatrist</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon" />
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; padding: 2em; }
+    #chatbox { background: #fff; border: 1px solid #ccc; padding: 1em; height: 300px; overflow-y: auto; }
+    input { padding: 0.5em; width: 60%; }
+    button { padding: 0.5em 1em; margin-left: 0.5em; }
+    .lucy { color: #2a9d8f; }
+    .user { color: #e76f51; }
+  </style>
 </head>
 <body>
   <h1>Lucy - AI Psychiatrist</h1>
@@ -15,36 +22,38 @@
   <button onclick="startListening()">🎤 Speak</button>
 
   <script>
-    function appendToChat(speaker, message) {
-      const chatbox = document.getElementById("chatbox");
-      chatbox.innerHTML += `<p><b>${speaker}:</b> ${message}</p>`;
-      chatbox.scrollTop = chatbox.scrollHeight;
+    function appendToChat(speaker, message, className = "") {
+      const box = document.getElementById("chatbox");
+      const entry = document.createElement("p");
+      entry.innerHTML = `<b class="${className}">${speaker}:</b> ${message}`;
+      box.appendChild(entry);
+      box.scrollTop = box.scrollHeight;
     }
 
     async function send() {
-      const input = document.getElementById("userInput").value;
-      if (!input.trim()) return;
+      const inputBox = document.getElementById("userInput");
+      const text = inputBox.value.trim();
+      if (!text) return;
 
-      appendToChat("You", input);
+      appendToChat("You", text, "user");
+      inputBox.value = "";
 
-      const response = await fetch("/ask", {
+      const askRes = await fetch("/ask", {
         method: "POST",
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text })
       });
 
-      const data = await response.json();
-      appendToChat("Lucy", data.response);
-      speak(data.response);
-      document.getElementById("userInput").value = "";
+      const data = await askRes.json();
+      appendToChat("Lucy", data.response, "lucy");
+      playVoice(data.response);
     }
 
     function startListening() {
       const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-      recognition.lang = 'en-US';
+      recognition.lang = "en-US";
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
-
       recognition.start();
 
       recognition.onresult = function (event) {
@@ -58,14 +67,13 @@
       };
     }
 
-    async function speak(text) {
-      const response = await fetch("/speak", {
+    async function playVoice(text) {
+      const res = await fetch("/speak", {
         method: "POST",
-        headers: { 'Content-Type': 'application/json' },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
       });
-
-      const blob = await response.blob();
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.play();
