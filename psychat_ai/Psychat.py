@@ -14,7 +14,7 @@ from cryptography.fernet import Fernet
 # Paths and setup
 MODEL_PATH = "models/llama3-psychiatrist-v1.3B-Q4_K_M.gguf"
 TTS_MODEL = "tts_models/en/jenny/jenny"
-VOSK_MODEL_PATH = "vosk-model-small-en-us-0.15"
+VOSK_MODEL_PATH = "models/vosk-model-small-en-us-0.15"
 KEY_FILE = "key.key"
 KNOWN_FACES_DIR = "known_faces"
 SESSIONS_DIR = "sessions"
@@ -41,7 +41,7 @@ def speak(text):
     os.system("aplay -q speech.wav")
 
 def callback(indata, frames, time_info, status):
-    if recognizer.AcceptWaveform(indata):
+    if recognizer.AcceptWaveform(indata.tobytes()):
         result = json.loads(recognizer.Result())
         if "text" in result:
             q.put(result["text"])
