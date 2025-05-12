@@ -1,75 +1,81 @@
 #!/bin/bash
 
-# Variables
-APP_DIR="$HOME/psychat"
-SERVICE_NAME="psychat"
-PYTHON="$APP_DIR/venv/bin/python3"
-SCRIPT="$APP_DIR/psychat.py"
-USER_NAME=$(whoami)
+set -e
 
+echo "[1/9] Updating system and installing apt dependencies..."
+sudo apt update && sudo apt install -y \
+  software-properties-common \
+  build-essential \
+  cmake \
+  python3.10 \
+  python3.10-venv \
+  python3.10-dev \
+  ffmpeg \
+  portaudio19-dev \
+  libasound2-dev \
+  alsa-utils \
+  pavucontrol \
+  libssl-dev \
+  libffi-dev \
+  libjpeg-dev \
+  libatlas-base-dev \
+  libopenblas-dev \
+  liblapack-dev \
+  libx11-dev \
+  libgtk-3-dev \
+  libboost-all-dev \
+  libpq-dev \
+  libopencv-dev \
+  unzip \
+  curl \
+  wget \
+  git \
+  openssh-server \
+  net-tools
 
-cd "$APP_DIR" || { echo "Failed to enter project directory"; exit 1; }
+echo "[2/9] Setting Python 3.10 as default..."
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+sudo update-alternatives --set python3 /usr/bin/python3.10
 
-echo "Updating system packages..."
-sudo apt update && sudo apt upgrade -y
+echo "[3/9] Upgrading pip and installing wheel..."
+curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3.10
+python3 -m pip install --upgrade pip setuptools wheel
 
-echo "Installing system dependencies..."
-sudo apt install -y \
-    python3 python3-pip python3-venv \
-    ffmpeg portaudio19-dev libopenblas-dev liblapack-dev \
-    libjpeg-dev libgl1-mesa-glx build-essential \
-    libffi-dev libssl-dev cmake unzip git curl wget
+echo "[4/9] Installing required Python packages..."
+python3 -m pip install \
+  flask \
+  llama-cpp-python \
+  face_recognition \
+  opencv-python \
+  cryptography \
+  TTS \
+  soundfile \
+  vosk \
+  sounddevice \
+  numpy
 
-echo "Creating virtual environment..."
-python3 -m venv venv
-source venv/bin/activate
+echo "[5/9] Cloning psychat repo from GitHub..."
+cd ~
+git clone https://github.com/Dingus89/psychat.git || echo "Repo already exists"
+cd psychat
 
-echo "Upgrading pip and installing Python packages..."
-pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
+echo "[6/9] Downloading Vosk speech model..."
+mkdir -p ~/models/vosk
+cd ~/models/vosk
+wget -nc https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+unzip -n vosk-model-small-en-us-0.15.zip
+rm -f vosk-model-small-en-us-0.15.zip
 
-echo "Downloading Vosk model..."
-mkdir -p models && cd models
-wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-unzip vosk-model-small-en-us-0.15.zip
-cd "$APP_DIR"
+echo "[7/9] Downloading LLaMA3 psychiatrist model (Q4_K_M)..."
+mkdir -p ~/models/llama3
+cd ~/models/llama3
+wget -nc https://huggingface.co/mradermacher/llama3-psychiatrist-v1.3B-fp16-GGUF/resolve/main/llama3-psychiatrist-v1.3B-Q4_K_M.gguf
 
-echo "Downloading AI Model..."
-cd models
-wget https://huggingface.cowiweka24/llama3-psychiatrist-v1.3B-4bit/resolve/llama3-psychiatrist-v1.3B-4bit.gguf
-cd "$APP_DIR"
+echo "[8/9] Building llama.cpp..."
+cd ~
+git clone https://github.com/ggerganov/llama.cpp || echo "llama.cpp already cloned"
+cd llama.cpp
+cmake -B build
+cmake --build build --config Release
 
-echo "Adding to directories..."
-mkdir -p static && cd static
-touch style.css favicon.ico
-cd "$APP_DIR"
-
-echo "Creating systemd service..."
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
-
-sudo bash -c "cat > $SERVICE_FILE" <<EOF
-[Unit]
-Description=Psychat AI Service
-After=network.target
-
-[Service]
-Type=simple
-User=$USER_NAME
-WorkingDirectory=$APP_DIR
-ExecStart=$PYTHON $SCRIPT
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-echo "Enabling and starting the service..."
-sudo systemctl daemon-reexec
-sudo systemctl daemon-reload
-sudo systemctl enable $SERVICE_NAME
-sudo systemctl start $SERVICE_NAME
-
-echo "Setup complete!"
-echo "Use these commands to check status or logs:"
-echo "  sudo systemctl status $SERVICE_NAME"
-echo "  journalctl -u $SERVICE_NAME -f"
+echo "[9/9] Setup complete. Ready to run psychat.py or web_psychat.py!"
