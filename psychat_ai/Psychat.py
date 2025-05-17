@@ -1,20 +1,19 @@
 import os
 import json
 import queue
-import pickle
+import requests
 import face_recognition
 import cv2
 import sounddevice as sd
 import vosk
 from datetime import datetime
-from llama_cpp import Llama
 from TTS.api import TTS
 from cryptography.fernet import Fernet
 
 # Paths and setup
-MODEL_PATH = "models/llama3-psychiatrist-v1.3B-Q4_K_M.gguf"
+GROQ_API_KEY = "your-key-here"
 TTS_MODEL = "tts_models/en/jenny/jenny"
-VOSK_MODEL_PATH = "models/vosk-model-small-en-us-0.15"
+VOSK_MODEL_PATH = "models/vosk/vosk-model-en-us-0.22"
 KEY_FILE = "key.key"
 KNOWN_FACES_DIR = "known_faces"
 SESSIONS_DIR = "sessions"
@@ -30,7 +29,6 @@ with open(KEY_FILE, "rb") as f:
 fernet = Fernet(key)
 
 # Load AI and speech models
-llm = Llama(model_path=MODEL_PATH, n_ctx=2048)
 tts = TTS(model_name=TTS_MODEL)
 vosk_model = vosk.Model(VOSK_MODEL_PATH)
 q = queue.Queue()
@@ -84,10 +82,36 @@ def enroll_face(name):
     if ret:
         cv2.imwrite(os.path.join(path, "face.jpg"), frame)
 
-def ask_llama(prompt):
-    full_prompt = open("prompt.txt").read() + prompt
-    response = llm(full_prompt, max_tokens=200, stop=["User:", "Lucy:"])
-    return response["choices"][0]["text"].strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+def ask_llama(conversation):
+    # Build LLaMA-3-style system prompt
+    messages = [{"role": "system", "content": "You are Lucy, a compassionate AI psychiatrist who uses DSM-5 criteria to understand the user's mental state."}]
+
+    for msg in conversation:
+        role = "assistant" if msg["speaker"].lower() == "lucy" else "user"
+        messages.append({"role": role, "content": msg["text"]})
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "mixtral-8x7b-32768",  # or "llama3-8b-8192" if you prefer
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 512
+    }
+
+    try:
+        response = requests.post(GROQ_API_URL, headers=headers, json=payload)
+        reply = response.json()["choices"][0]["message"]["content"]
+        return reply.strip()
+    except Exception as e:
+        print(f"[ERROR] Groq API call failed: {e}")
+        return "I'm having trouble connecting to the mind cloud right now."
 
 def append_to_log(user, speaker, text):
     path = os.path.join(SESSIONS_DIR, f"{user}.json")
