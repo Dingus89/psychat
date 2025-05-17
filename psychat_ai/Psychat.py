@@ -1,57 +1,82 @@
 import os
-import json
 import queue
-import requests
-import face_recognition
-import cv2
+import json
 import sounddevice as sd
 import vosk
+import soundfile as sf
+import face_recognition
+import cv2
+import dotenv
 from datetime import datetime
-from TTS.api import TTS
 from cryptography.fernet import Fernet
+from TTS.api import TTS
+import requests
 
-# Paths and setup
-GROQ_API_KEY = "your-key-here"
-TTS_MODEL = "tts_models/en/jenny/jenny"
-VOSK_MODEL_PATH = "models/vosk/vosk-model-en-us-0.22"
+# Load environment variables
+dotenv.load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Constants
+VOSK_PATH = "models/vosk-model-en-us-0.22"
 KEY_FILE = "key.key"
-KNOWN_FACES_DIR = "known_faces"
+FACES_DIR = "known_faces"
 SESSIONS_DIR = "sessions"
-os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
+PROMPT_FILE = "prompt.txt"
+SAMPLERATE = 44100
+
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+os.makedirs(FACES_DIR, exist_ok=True)
+
+# Load Vosk model
+vosk_model = vosk.Model(VOSK_PATH)
+q = queue.Queue()
+
+# TTS
+tts = TTS(model_name="tts_models/en/jenny/jenny")
 
 # Load or create encryption key
 if not os.path.exists(KEY_FILE):
     with open(KEY_FILE, "wb") as f:
         f.write(Fernet.generate_key())
 with open(KEY_FILE, "rb") as f:
-    key = f.read()
-fernet = Fernet(key)
+    fernet = Fernet(f.read())
 
-# Load AI and speech models
-tts = TTS(model_name=TTS_MODEL)
-vosk_model = vosk.Model(VOSK_MODEL_PATH)
-q = queue.Queue()
-recognizer = vosk.KaldiRecognizer(vosk_model, 16000)
-
-def speak(text):
-    tts.tts_to_file(text=text, file_path="speech.wav")
-    os.system("aplay -q speech.wav")
+# Load system prompt
+with open(PROMPT_FILE, "r") as f:
+    system_prompt = f.read().strip()
 
 def callback(indata, frames, time_info, status):
-    if recognizer.AcceptWaveform(indata.tobytes()):
+    if recognizer.AcceptWaveform(bytes(indata)):
         result = json.loads(recognizer.Result())
         if "text" in result:
             q.put(result["text"])
 
-def record_audio():
-    with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16',
+def record_audio(timeout=10, silence_timeout=3):
+    print("Listening...")
+    last_heard = datetime.now().timestamp()
+    start = datetime.now().timestamp()
+
+    with sd.RawInputStream(samplerate=SAMPLERATE, blocksize=8000, dtype='int16',
                            channels=1, callback=callback):
-        print("Listening...")
         while True:
-            result = q.get()
-            if result:
-                return result
+            try:
+                result = q.get(timeout=0.5)
+                if result:
+                    last_heard = datetime.now().timestamp()
+                    return result
+            except queue.Empty:
+                now = datetime.now().timestamp()
+                if now - last_heard > silence_timeout:
+                    speak("I didn't hear anything. Can you repeat that?")
+                    return None
+                if now - start > timeout:
+                    speak("Let's try again later.")
+                    return None
+
+def speak(text):
+    wav = tts.tts(text)
+    sf.write("speech.wav", wav, samplerate=SAMPLERATE)
+    os.system("aplay -q speech.wav")
 
 def recognize_user():
     cam = cv2.VideoCapture(0)
@@ -59,36 +84,43 @@ def recognize_user():
     cam.release()
     if not ret:
         return None
-
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb = frame[:, :, ::-1]
     encodings = face_recognition.face_encodings(rgb)
     if not encodings:
         return None
-
-    for name in os.listdir(KNOWN_FACES_DIR):
-        face_path = os.path.join(KNOWN_FACES_DIR, name, "face.jpg")
+    user_encoding = encodings[0]
+    for name in os.listdir(FACES_DIR):
+        face_path = os.path.join(FACES_DIR, name, "face.jpg")
         if os.path.exists(face_path):
-            known = face_recognition.face_encodings(face_recognition.load_image_file(face_path))[0]
-            if face_recognition.compare_faces([known], encodings[0])[0]:
+            known_image = face_recognition.load_image_file(face_path)
+            known_encoding = face_recognition.face_encodings(known_image)
+            if known_encoding and face_recognition.compare_faces([known_encoding[0]], user_encoding)[0]:
                 return name
     return None
 
 def enroll_face(name):
-    path = os.path.join(KNOWN_FACES_DIR, name)
-    os.makedirs(path, exist_ok=True)
+    user_dir = os.path.join(FACES_DIR, name)
+    os.makedirs(user_dir, exist_ok=True)
     cam = cv2.VideoCapture(0)
     ret, frame = cam.read()
     cam.release()
     if ret:
-        cv2.imwrite(os.path.join(path, "face.jpg"), frame)
+        cv2.imwrite(os.path.join(user_dir, "face.jpg"), frame)
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+def load_log(user):
+    path = os.path.join(SESSIONS_DIR, f"{user}.json")
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return json.loads(fernet.decrypt(f.read()))
+    return []
 
-def ask_llama(conversation):
-    # Build LLaMA-3-style system prompt
-    messages = [{"role": "system", "content": "You are Lucy, a compassionate AI psychiatrist who uses DSM-5 criteria to understand the user's mental state."}]
+def save_log(user, log):
+    path = os.path.join(SESSIONS_DIR, f"{user}.json")
+    with open(path, "wb") as f:
+        f.write(fernet.encrypt(json.dumps(log, indent=2).encode()))
 
+def ask_groq(conversation):
+    messages = [{"role": "system", "content": system_prompt}]
     for msg in conversation:
         role = "assistant" if msg["speaker"].lower() == "lucy" else "user"
         messages.append({"role": role, "content": msg["text"]})
@@ -99,54 +131,51 @@ def ask_llama(conversation):
     }
 
     payload = {
-        "model": "mixtral-8x7b-32768",  # or "llama3-8b-8192" if you prefer
+        "model": "llama3-8b-8192",
         "messages": messages,
         "temperature": 0.7,
         "max_tokens": 512
     }
 
     try:
-        response = requests.post(GROQ_API_URL, headers=headers, json=payload)
-        reply = response.json()["choices"][0]["message"]["content"]
-        return reply.strip()
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                                 headers=headers, json=payload)
+        return response.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        print(f"[ERROR] Groq API call failed: {e}")
-        return "I'm having trouble connecting to the mind cloud right now."
+        print(f"[Groq ERROR] {e}")
+        return "Sorry, I can't think clearly right now."
 
-def append_to_log(user, speaker, text):
-    path = os.path.join(SESSIONS_DIR, f"{user}.json")
-    log = []
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            log = json.load(f)
-    log.append({
-        "timestamp": datetime.now().isoformat(),
-        "speaker": speaker,
-        "text": text
-    })
-    with open(path, "w") as f:
-        json.dump(log, f, indent=2)
+def start_session():
+    user = recognize_user()
+    if not user:
+        speak("I don't recognize you. What is your name?")
+        spoken = record_audio()
+        if not spoken:
+            return
+        speak("How do you spell your name?")
+        spelling = record_audio()
+        if not spelling:
+            return
+        user = spelling.replace(" ", "").capitalize()
+        enroll_face(user)
 
-# MAIN
-speak("Scanning for face...")
-user = recognize_user()
+    speak(f"Hello {user}. How are you feeling today?")
+    conversation = load_log(user)
 
-if not user:
-    speak("I donât recognize you. What is your name?")
-    name = record_audio()
-    speak(f"How do you spell {name}?")
-    spelling = record_audio()
-    user = spelling.replace(" ", "").capitalize()
-    enroll_face(user)
-    speak(f"Nice to meet you, {user}.")
+    while True:
+        spoken = record_audio()
+        if not spoken:
+            continue
+        user_input = spoken.strip()
+        if user_input.lower() in ("quit", "exit", "goodbye"):
+            speak("Goodbye.")
+            break
+        conversation.append({"speaker": user, "text": user_input})
+        response = ask_groq(conversation)
+        conversation.append({"speaker": "Lucy", "text": response})
+        save_log(user, conversation)
+        speak(response)
 
-speak("Let's begin. How have you been feeling lately?")
-append_to_log(user, "Lucy", "Let's begin. How have you been feeling lately?")
-
-while True:
-    user_input = record_audio()
-    append_to_log(user, user, user_input)
-    response = ask_llama(f"\nUser: {user_input}\nLucy:")
-    append_to_log(user, "Lucy", response)
-    speak(response)
-    
+if __name__ == "__main__":
+    recognizer = vosk.KaldiRecognizer(vosk_model, SAMPLERATE)
+    start_session()
